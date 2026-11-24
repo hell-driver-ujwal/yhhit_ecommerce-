@@ -64,13 +64,13 @@ A fresh database starts with an empty catalog. Use **Try it out** and then **Exe
 
 1. In Django admin, add a category such as **Kitchenware** with slug `kitchenware`. Use the public category list to find its ID.
 2. In Swagger, call `POST /accounts/api/register/` twice to create a seller and a buyer. Send `email`, `password`, `confirm_password`, and `user_type` (`seller` or `buyer`). Register both before logging in.
-3. Call `POST /accounts/api/login/` with the seller's email and password. Copy `data.access` into Swagger's **Authorize** dialog under JWT. Create a product with `POST /products/api/products/`, using the category ID from step 1.
+3. Call `POST /accounts/api/login/` with the seller's email and password. Copy `data.access` into Swagger's **Authorize** dialog under JWT. Open `POST /api/my-products/`, choose **Try it out**, and select **application/x-www-form-urlencoded**. Enter the product details and select the category from the dropdown. Refresh Swagger after adding new categories. For a JSON request, send the category ID from step 1.
 
    ```json
    {"name": "Ceramic Mug", "description": "Blue stoneware", "price": 500, "stock": 8, "category": 1}
    ```
 
-4. Try `GET /products/api/products/?search=stoneware&category=kitchenware`. Copy the product ID from the response.
+4. Try `GET /api/products/?search=stoneware&category=kitchenware`. Copy the product ID from the response.
 5. Call `POST /accounts/api/logout/` with `{}`, then clear the seller token in **Authorize**. Log in as the buyer and authorize with the buyer's access token.
 6. Call `POST /cart/api/items/` with `{"product": 1, "quantity": 2}`, substituting the product ID from step 4. Call `GET /cart/api/` to check the cart. Two units priced at 500 give a subtotal of 1,000 and a total of 1,020 including tax.
 7. Call `POST /orders/api/` with an empty body to check out. Read the new order ID from `data.orders`. Use `GET /orders/api/` to view your history.
@@ -82,11 +82,12 @@ A fresh database starts with an empty catalog. Use **Try it out** and then **Exe
 | Register, log in, log out | `POST /accounts/api/register/`, `POST /accounts/api/login/`, `POST /accounts/api/logout/` |
 | Refresh access token | `POST /accounts/api/token/refresh/` |
 | Read or edit profile | `GET`, `PATCH /accounts/api/profile/` |
-| List or create categories | `GET`, `POST /products/api/category/` |
-| Read, update, or delete a category | `GET`, `PUT`, `PATCH`, `DELETE /products/api/category/{id}/` |
-| Search, list, or create products | `GET`, `POST /products/api/products/` |
-| Read, update, or delete a product | `GET`, `PUT`, `PATCH`, `DELETE /products/api/products/{id}/` |
-| List the signed-in seller's products | `GET /products/api/products/my-products/` |
+| List or create categories | `GET`, `POST /api/categories/` |
+| Read, update, or delete a category | `GET`, `PUT`, `PATCH`, `DELETE /api/categories/{id}/` |
+| Search or list products | `GET /api/products/` |
+| Read a product | `GET /api/products/{id}/` |
+| Update or delete your own product (seller) | `PUT`, `PATCH`, `DELETE /api/my-products/{id}/` |
+| List or create the signed-in seller's products | `GET`, `POST /api/my-products/` |
 | View cart or add items | `GET /cart/api/`, `POST /cart/api/items/` |
 | Decrease quantity or remove item | `POST /cart/api/items/{id}/decrease/`, `DELETE /cart/api/items/{id}/` |
 | Place an order or list history | `POST`, `GET /orders/api/` |

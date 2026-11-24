@@ -1,9 +1,7 @@
 from django.db.models.deletion import ProtectedError
-from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
+from drf_spectacular.utils import extend_schema, extend_schema_view
+from rest_framework import mixins, status, viewsets
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 from rest_framework.response import Response
@@ -13,18 +11,6 @@ from accounts.models import User
 from .filters import ProductFilter
 from .models import Category, Product
 from .serializers import CategorySerializers, ProductSerializers
-
-
-class ProductPermission(BasePermission):
-    def has_permission(self, request, view):
-        if request.method in SAFE_METHODS:
-            return True
-        if not request.user.is_authenticated:
-            return False
-        return request.method != "POST" or request.user.user_type == User.UserType.SELLER
-
-    def has_object_permission(self, request, view, product):
-        return request.method in SAFE_METHODS or product.created_by_id == request.user.pk
 
 
 class IsSeller(BasePermission):
@@ -39,41 +25,38 @@ class CategoryPermission(BasePermission):
         return request.method in SAFE_METHODS or request.user.is_staff
 
 
-class ProductViewSet(viewsets.ModelViewSet):
+@extend_schema(tags=["Catalog"])
+class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializers
-    authentication_classes = (JWTAuthentication, SessionAuthentication)
-    permission_classes = (ProductPermission,)
-
     filter_backends = (DjangoFilterBackend,)
     filterset_class = ProductFilter
 
-    def filter_queryset(self, queryset):
-        if self.action in ("list", "my_products"):
-            return super().filter_queryset(queryset)
-        return queryset
+
+@extend_schema(tags=["My products"])
+@extend_schema_view(list=extend_schema(summary="List my products"))
+class SellerProductViewSet(mixins.ListModelMixin, mixins.CreateModelMixin,
+                           mixins.UpdateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    queryset = Product.objects.all()
+    serializer_class = ProductSerializers
+    authentication_classes = (JWTAuthentication, SessionAuthentication)
+    permission_classes = (IsSeller,)
+    filter_backends = (DjangoFilterBackend,)
+    filterset_class = ProductFilter
 
     def get_queryset(self):
-        products = super().get_queryset()
-        if "category_slug" in self.kwargs:
-            category = get_object_or_404(Category, slug=self.kwargs["category_slug"])
-            return products.filter(category=category)
-        return products
+        if getattr(self, "swagger_fake_view", False):
+            return Product.objects.none()
+        return super().get_queryset().filter(created_by=self.request.user).order_by("pk")
 
-    @extend_schema(
-        operation_id="seller_my_products", summary="My products",
-        description="List products created by the signed-in seller.",
-        responses=ProductSerializers(many=True),
-    )
-    @action(detail=False, methods=["get"], url_path="my-products", permission_classes=[IsSeller])
-    def my_products(self, request):
-        products = self.filter_queryset(self.get_queryset().filter(created_by=request.user)).order_by("pk")
-        return Response(self.get_serializer(products, many=True).data)
+    def filter_queryset(self, queryset):
+        return super().filter_queryset(queryset) if self.action == "list" else queryset
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
 
+@extend_schema(tags=["Categories"])
 class CategoryViewset(viewsets.ModelViewSet):
     queryset = Category.objects.prefetch_related("products")
     serializer_class = CategorySerializers

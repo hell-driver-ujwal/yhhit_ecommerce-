@@ -22,7 +22,7 @@ class CatalogAccessTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
 
     def test_my_products_requires_seller_and_filters_by_owner(self):
-        url = reverse("product-my-products")
+        url = reverse("seller-product-list")
         self.assertEqual(self.client.get(url).status_code, 401)
         self.login_as(self.buyer)
         self.assertEqual(self.client.get(url).status_code, 403)
@@ -35,32 +35,33 @@ class CatalogAccessTests(APITestCase):
         for url in (
             reverse("product-list"), reverse("product-detail", args=[self.product.pk]),
             reverse("category-list"), reverse("category-detail", args=[self.category.pk]),
-            reverse("store"), reverse("store", args=["books"]),
         ):
             self.assertEqual(self.client.get(url).status_code, 200)
 
     def test_creation_requires_seller_and_sets_owner(self):
         data = {"name": "Notebook", "price": 4, "stock": 3, "category": self.category.pk, "created_by": self.other.pk}
-        for url in (reverse("product-list"), reverse("store")):
-            self.client.credentials()
-            self.assertEqual(self.client.post(url, data).status_code, 401)
-            self.login_as(self.buyer)
-            self.assertEqual(self.client.post(url, data).status_code, 403)
+        url = reverse("seller-product-list")
+        self.assertEqual(self.client.post(url, data, format="json").status_code, 401)
+        self.login_as(self.buyer)
+        self.assertEqual(self.client.post(url, data, format="json").status_code, 403)
         self.login_as(self.owner)
-        response = self.client.post(reverse("product-list"), data)
+        response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["created_by"], self.owner.pk)
 
     def test_only_owner_can_update_or_delete(self):
-        url = reverse("product-detail", args=[self.product.pk])
+        url = reverse("seller-product-detail", args=[self.product.pk])
         update = {"name": "New guide", "price": 3, "stock": 5, "category": self.category.pk}
-        for user in (self.buyer, self.other, self.admin):
+        for user, denied in ((self.buyer, 403), (self.other, 404), (self.admin, 403)):
             self.login_as(user)
-            self.assertEqual(self.client.patch(url, {"stock": 5}).status_code, 403)
-            self.assertEqual(self.client.put(url, update).status_code, 403)
-            self.assertEqual(self.client.delete(url).status_code, 403)
+            self.assertEqual(self.client.patch(url, {"stock": 5}).status_code, denied)
+            self.assertEqual(self.client.put(url, update, format="json").status_code, denied)
+            self.assertEqual(self.client.delete(url).status_code, denied)
         self.login_as(self.owner)
-        self.assertEqual(self.client.put(url, update).data["slug"], "new-guide")
+        public = reverse("product-detail", args=[self.product.pk])
+        self.assertEqual(self.client.patch(public, {"stock": 5}).status_code, 405)
+        self.assertEqual(self.client.delete(public).status_code, 405)
+        self.assertEqual(self.client.put(url, update, format="json").data["slug"], "new-guide")
         response = self.client.patch(url, {"stock": 7, "created_by": self.other.pk})
         self.assertEqual(response.data["stock"], 7)
         self.assertEqual(response.data["created_by"], self.owner.pk)
@@ -97,7 +98,23 @@ class CatalogAccessTests(APITestCase):
         self.assertEqual(self.client.get(url, {"search": "absent"}).json(), {"data": []})
 
         self.login_as(self.owner)
-        response = self.client.get(reverse("product-my-products"), {"search": "guide"})
+        response = self.client.get(reverse("seller-product-list"), {"search": "guide"})
         self.assertEqual([p["id"] for p in response.json()["data"]], [self.product.pk])
-        response = self.client.get(reverse("product-my-products"), {"search": "notebook"})
+        response = self.client.get(reverse("seller-product-list"), {"search": "notebook"})
         self.assertEqual(response.json(), {"data": []})
+
+    def test_category_dropdown_uses_admin_defined_names(self):
+        self.login_as(self.owner)
+        url = reverse("seller-product-list")
+        page = self.client.get(url, HTTP_ACCEPT="text/html")
+        self.assertContains(page, 'value="Books"')
+        schema = self.client.get(reverse("schema"), {"format": "json"}).json()
+        content = schema["paths"][url]["post"]["requestBody"]["content"]
+        field = content["application/x-www-form-urlencoded"]["schema"]["properties"]["category"]
+        self.assertEqual(field["enum"], ["Books"])
+        data = {"name": "Pocket Atlas", "stock": 2, "price": 50, "category": "Books"}
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["data"]["category"], self.category.pk)
+        self.assertEqual(self.client.patch(reverse("seller-product-detail", args=[response.data["id"]]),
+                                          {"category": "Missing"}).status_code, 400)

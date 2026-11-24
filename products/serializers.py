@@ -37,7 +37,26 @@ class AutoSlugMixin:
             raise
 
 
+class ProductCategoryField(serializers.PrimaryKeyRelatedField):
+    """HTML forms display category names. JSON clients use the primary key."""
+
+    def get_choices(self, cutoff=None):
+        names = self.get_queryset().values_list("name", flat=True)[:cutoff]
+        return {name: name for name in names}
+
+    def to_internal_value(self, data):
+        request = self.context.get("request")
+        if request and request.content_type.split(";")[0] in ("application/x-www-form-urlencoded", "multipart/form-data"):
+            try:
+                return self.get_queryset().get(name=data)
+            except Category.DoesNotExist:
+                raise serializers.ValidationError("Select an existing category.")
+        return super().to_internal_value(data)
+
+
 class ProductSerializers(AutoSlugMixin, serializers.ModelSerializer):
+    category = ProductCategoryField(queryset=Category.objects.order_by("name"))
+
     class Meta:
         model = Product
         fields = "__all__"

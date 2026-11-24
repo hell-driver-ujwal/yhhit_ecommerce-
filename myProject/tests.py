@@ -32,12 +32,12 @@ class JsonContractTests(APITestCase):
         self.client.force_authenticate(seller)
         category = Category.objects.create(name="Books", slug="books")
         data = {"name": "A Book", "category": category.pk, "stock": 1, "price": 4}
-        url = reverse("product-list")
-        created = self.client.post(url, data).json()["data"]
+        url = reverse("seller-product-list")
+        created = self.client.post(url, data, format="json").json()["data"]
         for change, field in (({"name": "A-Book"}, "name"), ({"name": "!!!"}, "name"),
                               ({"name": "Two", "price": -1}, "price"), ({"name": "Two", "stock": -1}, "stock")):
-            response = self.client.post(url, {**data, **change})
+            response = self.client.post(url, {**data, **change}, format="json")
             self.assertEqual(response.status_code, 400)
             self.assertIn(field, response.json()["error"])
-        deleted = self.client.delete(reverse("product-detail", args=[created["id"]]))
+        deleted = self.client.delete(reverse("seller-product-detail", args=[created["id"]]))
         self.assertEqual((deleted.status_code, deleted.content), (204, b""))
