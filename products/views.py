@@ -1,40 +1,90 @@
-from django.shortcuts import render
-from rest_framework import viewsets , generics , mixins
-from .models import Product, Category
-from django.shortcuts import get_object_or_404 
-from .serializers import CategorySerializers, ProductSerializers
-from rest_framework.decorators import api_view
+from django.db.models.deletion import ProtectedError
+from django.shortcuts import get_object_or_404
+from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import extend_schema
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.permissions import SAFE_METHODS, BasePermission
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from accounts.models import User
+from .filters import ProductFilter
+from .models import Category, Product
+from .serializers import CategorySerializers, ProductSerializers
 
 
-# Create your views here.
+class ProductPermission(BasePermission):
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        if not request.user.is_authenticated:
+            return False
+        return request.method != "POST" or request.user.user_type == User.UserType.SELLER
+
+    def has_object_permission(self, request, view, product):
+        return request.method in SAFE_METHODS or product.created_by_id == request.user.pk
+
+
+class IsSeller(BasePermission):
+    message = "A seller account is required."
+
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.user_type == User.UserType.SELLER
+
+
+class CategoryPermission(BasePermission):
+    def has_permission(self, request, view):
+        return request.method in SAFE_METHODS or request.user.is_staff
+
+
+class ProductViewSet(viewsets.ModelViewSet):
+    queryset = Product.objects.all()
+    serializer_class = ProductSerializers
+    authentication_classes = (JWTAuthentication, SessionAuthentication)
+    permission_classes = (ProductPermission,)
+
+    filter_backends = (DjangoFilterBackend,)
+    filterset_class = ProductFilter
+
+    def filter_queryset(self, queryset):
+        if self.action in ("list", "my_products"):
+            return super().filter_queryset(queryset)
+        return queryset
+
+    def get_queryset(self):
+        products = super().get_queryset()
+        if "category_slug" in self.kwargs:
+            category = get_object_or_404(Category, slug=self.kwargs["category_slug"])
+            return products.filter(category=category)
+        return products
+
+    @extend_schema(
+        operation_id="seller_my_products", summary="My products",
+        description="List products created by the signed-in seller.",
+        responses=ProductSerializers(many=True),
+    )
+    @action(detail=False, methods=["get"], url_path="my-products", permission_classes=[IsSeller])
+    def my_products(self, request):
+        products = self.filter_queryset(self.get_queryset().filter(created_by=request.user)).order_by("pk")
+        return Response(self.get_serializer(products, many=True).data)
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
 class CategoryViewset(viewsets.ModelViewSet):
-    queryset = Category.objects.all()
+    queryset = Category.objects.prefetch_related("products")
     serializer_class = CategorySerializers
+    authentication_classes = (JWTAuthentication, SessionAuthentication)
+    permission_classes = (CategoryPermission,)
 
-
-@api_view(['GET','POST'])
-def store(request, category_slug = None):
-    products = Product.objects.all()
-
-    if request.method == 'GET':
-        if category_slug is not None:
-            category = get_object_or_404(Category, slug = category_slug)
-            products = Product.objects.filter(category = category)
-
-        serializer = ProductSerializers(products, many = True)
-        return Response(serializer.data, status= status.HTTP_200_OK)
-
-    elif request.method == 'POST':
-        if category_slug is not None:
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
             return Response(
-                {"detail":"Use api/products to create products"}
-            ) 
-        
-        serializer = ProductSerializers(data = request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status = status.HTTP_201_CREATED)
-        
-    
+                {"detail": "This category still contains products."},
+                status=status.HTTP_409_CONFLICT,
+            )

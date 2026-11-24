@@ -10,7 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -41,9 +44,14 @@ INSTALLED_APPS = [
     # Custome apps 
     'accounts',
     'products',
+    'cart',
+    'orders',
 
     # installed
     'rest_framework',
+    'drf_spectacular',
+    'drf_spectacular_sidecar',
+    'rest_framework_simplejwt.token_blacklist',
     'django_filters',
 ]
 
@@ -132,3 +140,45 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Custom User Model 
 AUTH_USER_MODEL = 'accounts.User'
+
+# Supply JWT_SIGNING_KEY in deployments, or use a private key file locally.
+jwt_signing_key = os.environ.get("JWT_SIGNING_KEY")
+if not jwt_signing_key:
+    try:
+        jwt_signing_key = (BASE_DIR / ".jwt-signing-key").read_text().strip()
+    except FileNotFoundError as exc:
+        raise ImproperlyConfigured("Set JWT_SIGNING_KEY to a persistent random secret.") from exc
+if len(jwt_signing_key.encode()) < 32:
+    raise ImproperlyConfigured("JWT_SIGNING_KEY must be at least 32 bytes.")
+
+SIMPLE_JWT = {"SIGNING_KEY": jwt_signing_key}
+
+
+REST_FRAMEWORK = {
+    "EXCEPTION_HANDLER": "myProject.errors.api_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_RENDERER_CLASSES": [
+        "myProject.api.ApiJSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ],
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Marketplace API",
+    "VERSION": "1.0",
+    "DESCRIPTION": (
+        "Browse products anonymously. Sellers manage their products and fulfill their orders. "
+        "Buyers manage their cart, check out, and cancel pending or processing orders. "
+        "Staff manage categories. Log in with email and password, then enter data.access in Authorize. "
+        "JSON responses contain data on success or error on failure. HTTP 204 has an empty body."
+    ),
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SWAGGER_UI_DIST": "SIDECAR",
+    "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
+    "SWAGGER_UI_SETTINGS": {"deepLinking": True},
+    "POSTPROCESSING_HOOKS": [
+        "drf_spectacular.hooks.postprocess_schema_enums",
+        "myProject.schema.document_json_responses",
+    ],
+}

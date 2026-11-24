@@ -130,3 +130,4 @@ frontend/dist/
 .cache/
 tmp/
 temp/
+.jwt-signing-key
